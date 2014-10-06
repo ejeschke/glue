@@ -9,7 +9,7 @@ from ...external.qt.QtCore import Qt, QRect, Signal
 from .data_viewer import DataViewer
 from ... import core
 
-from ...clients.image_client import ImageClient
+from ...clients.image_client import MplImageClient
 from ...clients.ds9norm import DS9Normalize
 from ...external.modest_image import imshow
 
@@ -54,7 +54,7 @@ class ImageWidget(DataViewer):
         self.option_widget = self.ui
         self.ui.slice = DataSlice()
         self.ui.slice_layout.addWidget(self.ui.slice)
-        self.client = ImageClient(self._data,
+        self.client = MplImageClient(self._data,
                                   self.central_widget.canvas.fig,
                                   artist_container=self._container)
 
