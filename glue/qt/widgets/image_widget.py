@@ -12,7 +12,7 @@ from .data_viewer import DataViewer
 from ... import core
 from ... import config
 
-from ...clients.image_client import ImageClient
+from ...clients.image_client import MplImageClient
 from ...clients.ds9norm import DS9Normalize
 from ...external.modest_image import imshow
 
@@ -57,9 +57,9 @@ class ImageWidget(DataViewer):
         self.option_widget = self.ui
         self.ui.slice = DataSlice()
         self.ui.slice_layout.addWidget(self.ui.slice)
-        self.client = ImageClient(self._data,
-                                  self.central_widget.canvas.fig,
-                                  artist_container=self._container)
+        self.client = MplImageClient(self._data,
+                                     self.central_widget.canvas.fig,
+                                     artist_container=self._container)
         self._spectrum_tool = SpectrumTool(self)
         self._tweak_geometry()
 
