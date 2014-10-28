@@ -7,6 +7,8 @@ import numpy as np
 from ..util import (file_format, point_contour, view_shape, facet_subsets,
                     colorize_subsets, coerce_numeric, as_variable_name)
 
+from ...tests.helpers import requires_scipy
+
 
 class TestRelim(object):
     pass
@@ -35,6 +37,7 @@ class TestFileFormat(object):
         assert fmt == ''
 
 
+@requires_scipy
 class TestPointContour(object):
 
     def test(self):
@@ -161,7 +164,7 @@ def test_colorize_subsets_clip():
 
 def test_coerce_numeric():
 
-    x = np.array(['1', '2', '3.14', '4'], dtype="S4")
+    x = np.array(['1', '2', '3.14', '4'], dtype=str)
 
     np.testing.assert_array_equal(coerce_numeric(x),
                                   [1, 2, 3.14, 4])

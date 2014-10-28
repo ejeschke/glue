@@ -51,7 +51,6 @@ class Application(HubListener):
         self._settings = {}
         for key, value, validator in settings:
             self._settings[key] = [value, validator]
-        self._load_settings()
 
     @property
     def session(self):
@@ -125,9 +124,6 @@ class Application(HubListener):
         for key, (value, _) in self._settings.items():
             yield key, value
 
-    def _load_settings(self, path=None):
-        raise NotImplementedError()
-
     @catch_error("Could not load data")
     def load_data(self, path):
         d = load_data(path)
@@ -177,7 +173,7 @@ class Application(HubListener):
 
         datasets = as_list(datasets)
         data_collection.extend(datasets)
-        map(partial(cls._suggest_mergers, data_collection), datasets)
+        list(map(partial(cls._suggest_mergers, data_collection), datasets))
 
     @classmethod
     def _suggest_mergers(cls, data_collection, data):

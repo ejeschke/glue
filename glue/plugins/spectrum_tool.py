@@ -12,19 +12,20 @@ from ..external.qt.QtGui import (QMainWindow, QWidget,
                                  QLabel, QMdiSubWindow)
 
 from ..clients.profile_viewer import ProfileViewer
-from .widgets.mpl_widget import MplWidget
-from .mouse_mode import SpectrumExtractorMode
+from ..qt.widgets.mpl_widget import MplWidget
+from ..qt.mouse_mode import SpectrumExtractorMode
 from ..core.callback_property import add_callback, ignore_callback
 from ..core.util import Pointer
 from ..core import Subset
 from ..core.exceptions import IncompatibleAttribute
-from .glue_toolbar import GlueToolbar
-from .qtutil import load_ui, nonpartial, Worker
-from .widget_properties import CurrentComboProperty
+from ..qt.glue_toolbar import GlueToolbar
+from ..qt.qtutil import load_ui, nonpartial, Worker
+from ..qt.widget_properties import CurrentComboProperty
 from ..core.aggregate import Aggregate
-from .mime import LAYERS_MIME_TYPE
-from .simpleforms import build_form_item
+from ..qt.mime import LAYERS_MIME_TYPE
+from ..qt.simpleforms import build_form_item
 from ..config import fit_plugin
+from ..external.six.moves import range as xrange
 
 
 class Extractor(object):
@@ -47,8 +48,9 @@ class Extractor(object):
 
         l, r, b, t = roi.xmin, roi.xmax, roi.ymin, roi.ymax
         shp = data.shape
-        l, r = np.clip([l, r], 0, shp[xaxis])
-        b, t = np.clip([b, t], 0, shp[yaxis])
+        # The 'or 0' is because Numpy in Python 3 cannot deal with 'None'
+        l, r = np.clip([l or 0, r or 0], 0, shp[xaxis])
+        b, t = np.clip([b or 0, t or 0], 0, shp[yaxis])
 
         # extract sub-slice, without changing dimension
         slc = [slice(s, s + 1)
@@ -723,3 +725,10 @@ class SpectrumTool(object):
 
     def hide(self):
         self.widget.close()
+
+    def _get_modes(self, axes):
+        return [self.mouse_mode]
+
+    def _display_data_hook(self, data):
+        if data is not None:
+            self.mouse_mode.enabled = data.ndim > 2

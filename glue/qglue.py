@@ -78,7 +78,6 @@ def _parse_data_glue_data(data, label):
 def _parse_data_numpy(data, label):
     return [Data(**{label: data, 'label': label})]
 
-
 def _parse_data_path(path, label):
     from .core.data_factories import load_data, as_list
 
@@ -97,7 +96,7 @@ _parsers = [
     (list, _parse_data_numpy)]
 
 
-def _parse_data(data, label):
+def parse_data(data, label):
     for typ, prsr in _parsers:
         if isinstance(data, typ):
             try:
@@ -195,7 +194,7 @@ def qglue(**kwargs):
         def kg2lb(kg):
             return kg * 2.2
 
-        links = [(['balls.kg'], ['cones.lbs'], lb2kg, kb2lb)]
+        links = [(['balls.kg'], ['cones.lbs'], lb2kg, kg2lb)]
         qglue(balls=balls, cones=cones, links=links)
 
     :returns: A :class:`~glue.qt.glue_application.GlueApplication` object
@@ -207,7 +206,7 @@ def qglue(**kwargs):
 
     dc = DataCollection()
     for label, data in kwargs.items():
-        dc.extend(_parse_data(data, label))
+        dc.extend(parse_data(data, label))
 
     if links is not None:
         dc.add_link(_parse_links(dc, links))

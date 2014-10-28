@@ -4,6 +4,7 @@ from __future__ import absolute_import, division, print_function
 
 from distutils.version import LooseVersion
 import tempfile
+import io
 import os
 import sys
 
@@ -21,6 +22,11 @@ from ...external.qt.QtCore import QMimeData, QUrl
 from ..widgets.scatter_widget import ScatterWidget
 from ..widgets.image_widget import ImageWidget
 from ...core import Data
+
+from ...external.six import PY3
+
+from ...tests.helpers import requires_ipython_ge_012
+
 
 
 def tab_count(app):
@@ -61,7 +67,7 @@ class TestGlueApplication(object):
             if sys.version_info.major == 2:
                 mock_open = '__builtin__.open'
             else:
-                mock_open = 'io.open'
+                mock_open = 'builtins.open'
             with patch(mock_open) as op:
                 op.side_effect = IOError
                 fd.getSaveFileName.return_value = '/tmp/junk', '/tmp/junk'
@@ -69,7 +75,7 @@ class TestGlueApplication(object):
                     self.app._choose_save_session()
                     assert mb.call_count == 1
 
-    @pytest.mark.xfail("LooseVersion(ipy_version) <= LooseVersion('0.11')")
+    @requires_ipython_ge_012
     def test_terminal_present(self):
         """For good setups, terminal is available"""
         if not self.app.has_terminal():
@@ -103,7 +109,7 @@ class TestGlueApplication(object):
         except:
             return False
 
-    @pytest.mark.xfail("LooseVersion(ipy_version) <= LooseVersion('0.11')")
+    @requires_ipython_ge_012
     def test_toggle_terminal(self):
         term = MagicMock()
         self.app._terminal = term

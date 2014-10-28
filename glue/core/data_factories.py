@@ -243,17 +243,35 @@ def load_data(path, factory=None, **kwargs):
 
     Extra keywords are passed through to factory functions
     """
+    from ..qglue import parse_data
+
+    def as_data_objects(ds, lbl):
+        # pack other container types like astropy tables
+        # into glue data objects
+        for d in ds:
+            if isinstance(d, Data):
+                yield d
+                continue
+            for item in parse_data(d, lbl):
+                yield item
+
     factory = factory or auto_data
-    d = factory(path, **kwargs)
     lbl = data_label(path)
 
+    d = as_list(factory(path, **kwargs))
+    d = list(as_data_objects(d, lbl))
     log = LoadLog(path, factory, kwargs)
-    for item in as_list(d):
+    for item in d:
         if item.label is '':
             item.label = lbl
         log.log(item)  # attaches log metadata to item
         for cid in item.primary_components:
             log.log(item.get_component(cid))
+
+    if len(d) == 1:
+        # unpack single-length lists for user convenience
+        return d[0]
+
     return d
 
 
@@ -473,7 +491,19 @@ def astropy_tabular_data(*args, **kwargs):
     # Import FITS compatibility (for Astropy 0.2.x)
     from ..external import fits_io
 
-    table = Table.read(*args, **kwargs)
+    try:
+        table = Table.read(*args, **kwargs)
+    except:
+        # In Python 3, as of Astropy 0.4, if the format is not specified, the
+        # automatic format identification will fail (astropy/astropy#3013).
+        # This is only a problem for ASCII formats however, because it is due
+        # to the fact that the file object in io.ascii does not rewind to the
+        # start between guesses (due to a bug), so here we can explicitly try
+        # the ASCII format if the format keyword was not already present.
+        if 'format' not in kwargs:
+            table = Table.read(*args, format='ascii.glue', **kwargs)
+        else:
+            raise
 
     # Loop through columns and make component list
     for column_name in table.columns:
@@ -558,14 +588,22 @@ def panda_process(indf):
     result = Data()
     for name, column in indf.iteritems():
         if (column.dtype == np.object) | (column.dtype == np.bool):
-            # pandas has a 'special' nan implementation and this doesn't
-            # play well with np.unique
-            c = CategoricalComponent(column.fillna(np.nan))
+            # try to salvage numerical data
+            coerced = column.convert_objects(convert_numeric=True)
+            if (coerced.dtype != column.dtype) and coerced.isnull().mean() < 0.4:
+                c = Component(coerced.values)
+            else:
+                # pandas has a 'special' nan implementation and this doesn't
+                # play well with np.unique
+                c = CategoricalComponent(column.fillna(''))
         else:
             c = Component(column.values)
-        if name.startswith('#'):
-            name = name[1:]
+
+        # strip off leading #
         name = name.strip()
+        if name.startswith('#'):
+            name = name[1:].strip()
+
         result.add_component(c, name)
 
     return result
@@ -648,8 +686,9 @@ def img_loader(file_name):
     :rtype: Numpy array
     """
     try:
+        from skimage import img_as_ubyte
         from skimage.io import imread
-        return np.asarray(imread(file_name))
+        return np.asarray(img_as_ubyte(imread(file_name)))
     except ImportError:
         pass
 
