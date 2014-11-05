@@ -1,15 +1,13 @@
-import logging
 import sys
-import traceback
 import os.path
 import numpy as np
 
-from ...external.qt.QtGui import (QAction, QMainWindow,
+from ...external.qt.QtGui import (QAction,
                                   QToolButton, QToolBar, QIcon,
-                                  QActionGroup, QMdiSubWindow, QWidget,
+                                  QActionGroup, QWidget,
                                   QVBoxLayout, QColor, QImage, QPixmap)
 
-from ...external.qt.QtCore import Qt, QRect, QSize
+from ...external.qt.QtCore import Qt, QSize
 
 from ginga.qtw.ImageViewCanvasQt import ImageViewCanvas
 from ginga.qtw import Readout, ColorBar
@@ -18,17 +16,16 @@ from ginga import cmap as ginga_cmap
 # ginga_cmap.add_matplotlib_cmaps()
 
 from .image_widget import ImageWidgetBase
-from ... import config
 
 from ...clients.ginga_client import GingaClient
 
 from ...core import roi as roimod
+from ...core.callback_property import add_callback
 
-from ..qtutil import cmap2pixmap, get_icon, nonpartial
-
-from ..decorators import set_cursor
-from ..qtutil import cmap2pixmap, load_ui, get_icon, nonpartial
-from ..widget_properties import CurrentComboProperty, ButtonProperty
+from ..qtutil import get_icon, nonpartial
+from ...plugins.pv_slicer import PVSlicerTool
+from ...plugins.spectrum_tool import SpectrumTool
+from ...config import tool_registry
 
 # Find out location of ginga module so we can some of its icons
 ginga_home = os.path.split(sys.modules['ginga'].__file__)[0]
@@ -43,13 +40,13 @@ class GingaWidget(ImageWidgetBase):
 
     def __init__(self, session, parent=None):
 
-        #logger = logging.getLogger(__name__)
         self.logger = log.get_logger(name='ginga', log_stderr=True)
-        #self.logger = log.get_logger(name='ginga', null=True)
 
         self.canvas = ImageViewCanvas(self.logger, render='widget')
+
         # prevent widget from grabbing focus
         self.canvas.set_follow_focus(False)
+        self.canvas.enable_overlays(True)
 
         # enable interactive features
         bindings = self.canvas.get_bindings()
@@ -170,10 +167,17 @@ class GingaWidget(ImageWidgetBase):
                       lambda tf: self._set_roi_mode('circle', tf)))
         modes.append(("Polygon", get_icon('glue_lasso'),
                       lambda tf: self._set_roi_mode('polygon', tf)))
+
+        for tool in self._tools:
+            modes += tool._get_modes(self.canvas)
+            add_callback(self.client, 'display_data', tool._display_data_hook)
+
         return modes
 
     def _set_roi_mode(self, name, tf):
         self.canvas.enable_draw(True)
+        # XXX need better way of setting draw contexts
+        self.canvas.draw_context = self
         self.canvas.set_drawtype(name, color='cyan', linestyle='dash')
         bm = self.canvas.get_bindmap()
         bm.set_modifier('draw', modtype='locked')
@@ -184,72 +188,22 @@ class GingaWidget(ImageWidgetBase):
         except:
             pass
 
-    def ginga_graphic_to_roi(self, obj):
-        if obj.kind == 'rectangle':
-            roi = roimod.RectangularROI(xmin=obj.x1, xmax=obj.x2,
-                                        ymin=obj.y1, ymax=obj.y2)
-        elif obj.kind == 'circle':
-            roi = roimod.CircularROI(xc=obj.x, yc=obj.y,
-                                     radius=obj.radius)
-        elif obj.kind == 'polygon':
-            vx = map(lambda xy: xy[0], obj.points)
-            vy = map(lambda xy: xy[1], obj.points)
-            roi = roimod.PolygonalROI(vx=vx, vy=vy)
-
-        else:
-            raise Exception("Don't know how to convert shape '%s' to a ROI" % (
-                obj.kind))
-
-        return roi
-
     def _apply_roi_cb(self, canvas, tag):
+        if self.canvas.draw_context is not self:
+            return
         self.roi_tag = tag
         obj = self.canvas.getObjectByTag(self.roi_tag)
-        roi = self.ginga_graphic_to_roi(obj)
+        roi = ginga_graphic_to_roi(obj)
         # delete outline
         self.canvas.deleteObject(obj, redraw=False)
-        try:
-            self.apply_roi(roi)
-        except Exception as e:
-            print "Error applying ROI: %s" % (str(e))
-            (type, value, tb) = sys.exc_info()
-            print "Traceback:\n%s" % ("".join(traceback.format_tb(tb)))
+        self.apply_roi(roi)
 
-    def _init_widgets(self):
-        pass
+    def _tweak_geometry(self):
+        super(GingaWidget, self)._tweak_geometry()
 
-    def motion_readout(self, canvas, button, data_x, data_y):
-
-        # Get the value under the data coordinates
-        try:
-            #value = fitsimage.get_data(data_x, data_y)
-            # We report the value across the pixel, even though the coords
-            # change halfway across the pixel
-            value = canvas.get_data(int(data_x + 0.5), int(data_y + 0.5))
-
-        except Exception:
-            value = None
-
-        fits_x, fits_y = data_x + 1, data_y + 1
-
-        # Calculate WCS RA
-        try:
-            # NOTE: image function operates on DATA space coords
-            image = canvas.get_image()
-            if image is None:
-                # No image loaded
-                return
-            ra_txt, dec_txt = image.pixtoradec(fits_x, fits_y,
-                                               format='str', coords='fits')
-        except Exception as e:
-            self.logger.warn("Bad coordinate conversion: %s" % (
-                str(e)))
-            ra_txt = 'BAD WCS'
-            dec_txt = 'BAD WCS'
-
-        text = "RA: %s  DEC: %s  X: %.2f  Y: %.2f  Value: %s" % (
-            ra_txt, dec_txt, fits_x, fits_y, value)
-        self.readout.set_text(text)
+        # rgb mode not supported yet, so hide option
+        self.ui.monochrome.hide()
+        self.ui.rgb.hide()
 
     def motion_readout(self, canvas, button, data_x, data_y):
         """This method is called when the user moves the mouse around the Ginga
@@ -260,7 +214,7 @@ class GingaWidget(ImageWidgetBase):
 
         # Get the value under the data coordinates
         try:
-            #value = fitsimage.get_data(data_x, data_y)
+            # value = fitsimage.get_data(data_x, data_y)
             # We report the value across the pixel, even though the coords
             # change halfway across the pixel
             value = canvas.get_data(int(data_x + 0.5), int(data_y + 0.5))
@@ -269,7 +223,7 @@ class GingaWidget(ImageWidgetBase):
             value = None
 
         x_lbl, y_lbl = d['labels'][0], d['labels'][1]
-        #x_txt, y_txt = d['world'][0], d['world'][1]
+        # x_txt, y_txt = d['world'][0], d['world'][1]
 
         text = "%s  %s  X=%.2f  Y=%.2f  Value=%s" % (
             x_lbl, y_lbl, data_x, data_y, value)
@@ -279,7 +233,6 @@ class GingaWidget(ImageWidgetBase):
         """This method is called when a toggle button in the toolbar is pressed
         selecting one of the modes.
         """
-        #print("%s mode %s" % (modname, tf))
         bm = self.canvas.get_bindmap()
         if not tf:
             bm.reset_modifier(self.canvas)
@@ -307,6 +260,7 @@ class GingaWidget(ImageWidgetBase):
             self.mode_w.setChecked(False)
             self.mode_w = None
         return True
+
 
 class ColormapAction(QAction):
 
@@ -340,222 +294,110 @@ def _colormap_mode(parent, on_trigger):
     return tb
 
 
-class StandaloneGingaWidget(QMainWindow):
+def ginga_graphic_to_roi(obj):
+    if obj.kind == 'rectangle':
+        roi = roimod.RectangularROI(xmin=obj.x1, xmax=obj.x2,
+                                    ymin=obj.y1, ymax=obj.y2)
+    elif obj.kind == 'circle':
+        roi = roimod.CircularROI(xc=obj.x, yc=obj.y,
+                                 radius=obj.radius)
+    elif obj.kind == 'polygon':
+        vx = map(lambda xy: xy[0], obj.points)
+        vy = map(lambda xy: xy[1], obj.points)
+        roi = roimod.PolygonalROI(vx=vx, vy=vy)
 
-    """
-    A simplified image viewer, without any brushing or linking,
-    but with the ability to adjust contrast and resample.
-    """
+    else:
+        raise Exception("Don't know how to convert shape '%s' to a ROI" % (
+            obj.kind))
 
-    def __init__(self, image, parent=None, **kwargs):
-        """
-        :param image: Image to display (2D numpy array)
-        :param parent: Parent widget (optional)
+    return roi
 
-        :param kwargs: Extra keywords to pass to imshow
-        """
-        super(StandaloneGingaWidget, self).__init__(parent)
 
-        #logger = logging.getLogger(__name__)
-        logger = log.get_logger(name='ginga', log_stderr=True)
-        self.canvas = ImageViewCanvas(logger)
-        self.central_widget = self.canvas.get_widget()
-        self.setCentralWidget(self.central_widget)
-        self._setup_axes()
+class GingaTool(object):
+    label = None
+    icon = None
+    shape = 'polygon'
+    color = 'red'
+    linestyle = 'solid'
 
-        self._im = None
+    def __init__(self, canvas):
+        self.parent_canvas = canvas
+        self._shape_tag = None
 
-        # self.make_toolbar()
-        self.set_image(image, **kwargs)
+        self.parent_canvas.set_callback('draw-event', self._extract_callback)
+        self.parent_canvas.set_callback('draw-down', self._clear_shape_cb)
 
-    def _setup_axes(self):
-        ## self._axes = self.central_widget.canvas.fig.add_subplot(111)
-        ## self._axes.set_aspect('equal', adjustable='datalim')
+    def _get_modes(self, canvas):
+        return [(self.label, get_icon(self.icon), self._set_path_mode)]
+
+    def _display_data_hook(self, data):
+        # XXX need access to mode here
         pass
 
-    def set_image(self, image, **kwargs):
-        """
-        Update the image shown in the widget
-        """
-        #print "image is", image
-        if self._im is not None:
-            self._im.remove()
-            self._im = None
+    def _set_path_mode(self, enable):
+        self.parent_canvas.enable_draw(True)
+        self.parent_canvas.draw_context = self
 
-        ## kwargs.setdefault('origin', 'upper')
+        self.parent_canvas.set_drawtype(self.shape, color=self.color, linestyle=self.linestyle)
+        bm = self.parent_canvas.get_bindmap()
+        bm.set_modifier('draw', modtype='locked')
 
-        # self._im = imshow(self._axes, image,
-        # norm=self._norm, cmap='gray', **kwargs)
-        ## self._im_array = image
-        # self._axes.set_xticks([])
-        # self._axes.set_yticks([])
-        self._redraw()
+    def _clear_shape_cb(self, *args):
+        try:
+            self.parent_canvas.deleteObjectByTag(self._shape_tag)
+        except:
+            pass
 
-    @property
-    def axes(self):
-        """
-        The Matplolib axes object for this figure
-        """
-        return self._axes
-
-    def show(self):
-        super(StandaloneGingaWidget, self).show()
-        self._redraw()
-
-    def _redraw(self):
-        self.canvas.redraw()
-
-    def _set_cmap(self, cmap):
-        # self._im.set_cmap(cmap)
-        self._redraw()
-
-    def mdi_wrap(self):
-        """
-        Embed this widget in a QMdiSubWindow
-        """
-        sub = QMdiSubWindow()
-        sub.setWidget(self)
-        self.destroyed.connect(sub.close)
-        sub.resize(self.size())
-        self._mdi_wrapper = sub
-
-        return sub
-
-    def _set_norm(self, mode):
-        # ginga takes care of this by itself
-        pass
+    _clear_path = _clear_shape_cb
 
 
-class PVSliceWidget(StandaloneGingaWidget):
+class GingaPVSlicer(GingaTool, PVSlicerTool):
+    label = 'PV Slicer'
+    icon = 'glue_slice'
+    shape = 'path'
 
-    """ A standalone image widget with extra interactivity for PV slices """
+    def __init__(self, widget=None):
+        GingaTool.__init__(self, widget.canvas)
+        PVSlicerTool.__init__(self, widget)
 
-    def __init__(self, image, x, y, image_widget):
-        self._parent = image_widget
-        super(PVSliceWidget, self).__init__(image, x=x, y=y)
-        conn = self.axes.figure.canvas.mpl_connect
-        self._down_id = conn('button_press_event', self._on_click)
-        self._move_id = conn('motion_notify_event', self._on_move)
-
-    def set_image(self, im, x, y):
-        super(PVSliceWidget, self).set_image(im)
-        self._axes.set_aspect('auto')
-        self._axes.set_xlim(0, im.shape[1])
-        self._axes.set_ylim(0, im.shape[0])
-        self._slc = self._parent.slice
-        self._x = x
-        self._y = y
-
-    def _sync_slice(self, event):
-        s = list(self._slc)
-
-        # XXX breaks if display_data changes
-        _, _, z = self._pos_in_parent(event)
-        s[_slice_index(self._parent.data, s)] = z
-        self._parent.slice = tuple(s)
-
-    def _draw_crosshairs(self, event):
-        x, y, _ = self._pos_in_parent(event)
-        ax = self._parent.client.axes
-        m, = ax.plot([x], [y], '+', ms=12, mfc='none', mec='#de2d26',
-                     mew=2, zorder=100)
-        ax.figure.canvas.draw()
-        m.remove()
-
-    def _on_move(self, event):
-        if not event.button:
+    def _extract_callback(self, canvas, tag):
+        if self.parent_canvas.draw_context is not self:
             return
 
-        if not event.inaxes or event.canvas.toolbar.mode != '':
+        self._shape_tag = tag
+        obj = self.parent_canvas.getObjectByTag(tag)
+        vx, vy = zip(*obj.points)
+        return self._build_from_vertices(vx, vy)
+
+
+class GingaSpectrumTool(GingaTool, SpectrumTool):
+    label = 'Spectrum'
+    icon = 'glue_spectrum'
+    shape = 'rectangle'
+
+    def __init__(self, widget=None):
+        GingaTool.__init__(self, widget.canvas)
+        SpectrumTool.__init__(self, widget)
+
+    def _extract_callback(self, canvas, tag):
+        if self.parent_canvas.draw_context is not self:
             return
 
-        self._sync_slice(event)
-        self._draw_crosshairs(event)
+        self._shape_tag = tag
+        obj = self.parent_canvas.getObjectByTag(tag)
+        roi = ginga_graphic_to_roi(obj)
+        return self._update_from_roi(roi)
 
-    def _pos_in_parent(self, event):
-        ind = np.clip(event.xdata, 0, self._im_array.shape[1] - 1)
-        x = self._x[ind]
-        y = self._y[ind]
-        z = event.ydata
+    def _setup_mouse_mode(self):
+        # XXX fix this ugliness
+        class Dummy:
 
-        return x, y, z
+            def clear(self):
+                pass
+        return Dummy()
 
-    def _on_click(self, event):
-        if not event.inaxes or event.canvas.toolbar.mode != '':
-            return
-        self._sync_slice(event)
-        self._draw_crosshairs(event)
-
-
-def _slice_index(data, slc):
-    """
-    The axis over which to extract PV slices
-    """
-    return max([i for i in range(len(slc))
-                if isinstance(slc[i], int)],
-               key=lambda x: data.shape[x])
-
-
-def _slice_from_path(x, y, data, attribute, slc):
-    """
-    Extract a PV-like slice from a cube
-
-    :param x: An array of x values to extract (pixel units)
-    :param y: An array of y values to extract (pixel units)
-    :param data: :class:`~glue.core.data.Data`
-    :param attribute: :claass:`~glue.core.data.Component`
-    :param slc: orientation of the image widget that `pts` are defined on
-
-    :returns: (slice, x, y)
-              slice is a 2D Numpy array, corresponding to a "PV ribbon"
-              cutout from the cube
-              x and y are the resampled points along which the
-              ribbon is extracted
-
-    :note: For >3D cubes, the "V-axis" of the PV slice is the longest
-           cube axis ignoring the x/y axes of `slc`
-    """
-    from ...external.pvextractor import Path, extract_pv_slice
-    p = Path(list(zip(x, y)))
-
-    cube = data[attribute]
-    dims = list(range(data.ndim))
-    s = list(slc)
-    ind = _slice_index(data, slc)
-
-    # transpose cube to (z, y, x, <whatever>)
-    def _swap(x, s, i, j):
-        x[i], x[j] = x[j], x[i]
-        s[i], s[j] = s[j], s[i]
-
-    _swap(dims, s, ind, 0)
-    _swap(dims, s, s.index('y'), 1)
-    _swap(dims, s, s.index('x'), 2)
-    cube = cube.transpose(dims)
-
-    # slice down from >3D to 3D if needed
-    s = [slice(None)] * 3 + [slc[d] for d in dims[3:]]
-    cube = cube[s]
-
-    # sample cube
-    spacing = 1  # pixel
-    x, y = [np.round(_x).astype(int) for _x in p.sample_points(spacing)]
-    result = extract_pv_slice(cube, p, order=0).data
-
-    return result, x, y
-
-
-def _slice_label(data, slc):
-    """
-    Returns a formatted axis label corresponding to the slice dimension
-    in a PV slice
-
-    :param data: Data that slice is extracted from
-    :param slc: orientation in the image widget from which the PV slice
-                was defined
-    """
-    idx = _slice_index(data, slc)
-    return data.get_world_component_id(idx).label
+tool_registry.add(GingaPVSlicer, GingaWidget)
+tool_registry.add(GingaSpectrumTool, GingaWidget)
 
 
 def cmap2pixmap(cmap, steps=50):

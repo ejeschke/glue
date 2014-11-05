@@ -19,7 +19,9 @@ from .viz_client import VizClient, init_mpl
 from .util import defer_draw
 from .layer_artist import (ScatterLayerArtist, LayerArtistContainer,
                            ImageLayerArtist, SubsetImageLayerArtist,
-                           RGBImageLayerArtist)
+                           RGBImageLayerArtist,
+                           ImageLayerBase, RGBImageLayerBase,
+                           SubsetImageLayerBase, ScatterLayerBase)
 
 
 def requires_data(func):
@@ -192,7 +194,7 @@ class ImageClient(VizClient):
         """
         self._override_image = image
         for a in self.artists[self.display_data]:
-            if isinstance(a, ImageLayerArtist):
+            if isinstance(a, ImageLayerBase):
                 a.override_image(image)
         self._update_data_plot()
         self._redraw()
@@ -200,7 +202,7 @@ class ImageClient(VizClient):
     def _clear_override(self):
         self._override_image = None
         for a in self.artists[self.display_data]:
-            if isinstance(a, ImageLayerArtist):
+            if isinstance(a, ImageLayerBase):
                 a.clear_override()
 
     @slice_ind.setter
@@ -325,7 +327,7 @@ class ImageClient(VizClient):
 
         self._view = view
         for a in list(self.artists):
-            if (not isinstance(a, ScatterLayerArtist)) and \
+            if (not isinstance(a, ScatterLayerBase)) and \
                     a.layer.data is not self.display_data:
                 self.artists.remove(a)
             else:
@@ -422,7 +424,7 @@ class ImageClient(VizClient):
         If None, check if RGB mode is enabled
 
         :rtype: LayerArtist or None
-          If RGB mode is enabled, returns an RGBImageLayerArtist
+          If RGB mode is enabled, returns an RGBImageLayerBase
           If enable=False, return the new ImageLayerArtist
         """
         # XXX need to better handle case where two RGBImageLayerArtists
@@ -430,7 +432,7 @@ class ImageClient(VizClient):
 
         if enable is None:
             for a in self.artists:
-                if isinstance(a, RGBImageLayerArtist):
+                if isinstance(a, RGBImageLayerBase):
                     return a
             return None
 
@@ -439,6 +441,9 @@ class ImageClient(VizClient):
         if enable:
             layer = self.display_data
             a = self._new_rgb_layer(layer)
+            if a is None:
+                return
+
             a.r = a.g = a.b = self.display_attribute
 
             with self.artists.ignore_empty():
@@ -448,7 +453,7 @@ class ImageClient(VizClient):
         else:
             with self.artists.ignore_empty():
                 for artist in list(self.artists):
-                    if isinstance(artist, RGBImageLayerArtist):
+                    if isinstance(artist, RGBImageLayerBase):
                         self.artists.remove(artist)
                 result = self.add_layer(layer)
 
@@ -512,7 +517,7 @@ class ImageClient(VizClient):
         need_redraw = False
 
         for a in self.artists[layer]:
-            if not isinstance(a, ScatterLayerArtist):
+            if not isinstance(a, ScatterLayerBase):
                 continue
             need_redraw = True
             a.xatt = xatt
@@ -580,13 +585,13 @@ class ImageClient(VizClient):
             props = dict((k, v if k == 'stretch' else context.object(v))
                          for k, v in layer.items())
             l = props['layer']
-            if c == ScatterLayerArtist:
+            if c == ScatterLayerBase:
                 l = self.add_scatter_layer(l)
-            elif c == ImageLayerArtist or c == SubsetImageLayerArtist:
+            elif c == ImageLayerBase or c == SubsetImageLayerBase:
                 if isinstance(l, Data):
                     self.set_data(l)
                 l = self.add_layer(l)
-            elif c == RGBImageLayerArtist:
+            elif c == RGBImageLayerBase:
                 r = props.pop('r')
                 g = props.pop('g')
                 b = props.pop('b')
@@ -603,7 +608,7 @@ class ImageClient(VizClient):
     # subclasses should override the following methods as appropriate
     def _new_rgb_layer(self, layer):
         """
-        Construct and return an RGBImageLayerArtist for the given layer
+        Construct and return an RGBImageLayerBase for the given layer
 
         Parameters
         ----------
@@ -658,6 +663,12 @@ class ImageClient(VizClient):
         """
         pass
 
+    def show_crosshairs(self, x, y):
+        pass
+
+    def clear_crosshairs(self):
+        pass
+
 
 class MplImageClient(ImageClient):
 
@@ -670,6 +681,9 @@ class MplImageClient(ImageClient):
 
         # description of field of view and center of image
         self._view_window = None
+
+        # artist for a crosshair
+        self._crosshairs = None
 
     def _setup_mpl(self, figure, axes):
         figure, axes = init_mpl(figure, axes, wcs=True)
@@ -764,6 +778,20 @@ class MplImageClient(ImageClient):
         slc[slc.index('x')] = x
         slc[slc.index('y')] = y
         return (att,) + tuple(slc)
+
+    def show_crosshairs(self, x, y):
+        if self._crosshairs is not None:
+            self._crosshairs.remove()
+
+        self._crosshairs, = self._axes.plot([x], [y], '+', ms=12,
+                                            mfc='none', mec='#d32d26',
+                                            mew=2, zorder=100)
+        self._redraw()
+
+    def clear_crosshairs(self):
+        if self._crosshairs is not None:
+            self._crosshairs.remove()
+            self._crosshairs = None
 
 
 def _2d_shape(shape, slc):
